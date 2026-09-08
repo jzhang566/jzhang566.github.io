@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RV32 DSP Extension — README</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="../style.css">
+  <style>
+    /* Extra styles just for README pages: code blocks and tables */
+    pre {
+      background-color: #EAE4D3;
+      border: 1px solid #999;
+      padding: 10px 12px;
+      overflow-x: auto;
+      font-family: "Courier New", Courier, monospace;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    code {
+      font-family: "Courier New", Courier, monospace;
+      background-color: #EAE4D3;
+      padding: 1px 4px;
+      border: 1px solid #ccc;
+    }
+    pre code {
+      background: none;
+      border: none;
+      padding: 0;
+    }
+    table.readme-table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 12px 0 20px 0;
+      font-family: Verdana, Geneva, sans-serif;
+      font-size: 13px;
+    }
+    table.readme-table th, table.readme-table td {
+      border: 1px solid #999;
+      padding: 6px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    table.readme-table th {
+      background-color: #EAE4D3;
+    }
+    table.readme-table tr:nth-child(even) td {
+      background-color: #FBF9F2;
+    }
+    .back-link {
+      font-family: Verdana, Geneva, sans-serif;
+      font-size: 13px;
+      margin-bottom: 18px;
+      display: inline-block;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+
+    <header class="site-header">
+      <h1>Johnny Zhang</h1>
+      <p class="tagline">Electrical Engineering student at UCLA</p>
+      <nav class="site-nav">
+        <a href="../index.html">Home</a>
+        <a href="../projects.html" class="current">Projects</a>
+        <a href="../research.html">Research</a>
+      </nav>
+    </header>
+
+    <a class="back-link" href="../projects.html">&larr; Back to Projects</a>
+
+    <h2>RV32 DSP Extension — RTL (v1, Q1.15)</h2>
+    <p>
+      SystemVerilog RTL for the Q1.15 fixed-point DSP extension, built and verified
+      bottom-up. Target: Zynq-7020, paired with a CV32E40X host over CV-X-IF v1.0.0.
+      DSP48 inference (no manual primitive instantiation).
+    </p>
+
+    <h2>Modules and status</h2>
+    <table class="readme-table">
+      <tr>
+        <th>Step</th>
+        <th>Module</th>
+        <th>What it is</th>
+        <th>Testbench</th>
+        <th>Status</th>
+      </tr>
+      <tr>
+        <td>1</td>
+        <td><code>q15_alu</code></td>
+        <td>Single-lane saturating Q1.15 add/sub/mul</td>
+        <td><code>tb_q15_alu</code></td>
+        <td>PASS (6433 vec)</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td><code>q15_valu</code></td>
+        <td>8-lane packed vector ALU (vsadd/vssub/vsmul)</td>
+        <td><code>tb_q15_valu</code></td>
+        <td>PASS (4560 vec)</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td><code>vrf</code></td>
+        <td>16×128 register file, 2R1W, write-first</td>
+        <td><code>tb_vrf</code></td>
+        <td>PASS (10032 chk)</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td><code>q15_mac</code></td>
+        <td>64-bit accumulators, vmacc/vmsac, vextract</td>
+        <td><code>tb_q15_mac</code></td>
+        <td>PASS (840 chk)</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td><code>q15_cmul</code></td>
+        <td>Packed complex multiply (vcmul/.conj)</td>
+        <td><code>tb_q15_cmul</code></td>
+        <td>PASS (8642 vec)</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td><code>dsp_cvxif</code></td>
+        <td>CV-X-IF adapter for scalar packed ops</td>
+        <td><code>tb_dsp_cvxif</code></td>
+        <td>PASS (309 chk)</td>
+      </tr>
+    </table>
+
+    <p>
+      Support: <code>cvxif_pkg</code> (CV-X-IF v1.0.0 types), <code>dsp_decode</code> (scalar op decoder).<br>
+      Golden models: <code>q15_ref.py</code>, <code>q15_valu_ref.py</code>, <code>mac_ref.py</code>, <code>vcmul_ref.py</code>.
+    </p>
+
+    <h2>Key design decisions (as built)</h2>
+    <ul>
+      <li>Q1.15 only for v1. Q1.31 and the fused butterfly (vcbfly) are deferred.</li>
+      <li>Round-to-nearest-even everywhere; one rounding step per op (after any add/sub of products), never per product.</li>
+      <li>Saturation clamps to [0x8000, 0x7FFF]; the -1.0*-1.0 = +1.0 case saturates to +0x7FFF (verified in every arithmetic module).</li>
+      <li>Accumulators are a uniform 64-bit per lane, sized so overflow does not occur in practice; only vextract saturates.</li>
+      <li>16 vector registers, 4 per-lane accumulators (each 8×64b), 2 scalar reduction accumulators (reduction path not in this RTL drop yet).</li>
+      <li>Register file reads are combinational with a write-first bypass; maps to LUT-RAM on the 7020.</li>
+    </ul>
+
+    <h2>CV-X-IF adapter scope and caveats</h2>
+    <p>
+      <code>dsp_cvxif</code> implements the <strong>scalar packed</strong> ops (sadd.h / ssub.h / smul.h),
+      which map cleanly onto the CV-X-IF GPR-operand model (two 32-bit sources &rarr;
+      one 32-bit result, two Q1.15 lanes per word). It:
+    </p>
+    <ul>
+      <li>accepts only the custom-0 scalar encodings, rejects everything else;</li>
+      <li>uses coupled issue+register (X_ISSUE_REGISTER_SPLIT = 0, the CV32E40X case);</li>
+      <li><strong>registers operands before computing</strong> so there is no combinational path from <code>register.rs</code> to <code>result</code> (a CV-X-IF requirement);</li>
+      <li>produces a result only after <code>commit_valid &amp;&amp; !commit_kill</code>; killed instructions produce no result;</li>
+      <li>is single-in-flight (correct for in-order single-issue CV32E40X).</li>
+    </ul>
+
+    <p><strong>Not yet wired (next work):</strong></p>
+    <ul>
+      <li>
+        The <strong>vector</strong> ops (vld/vst, vsadd.h, vmacc, vcmul, ...) are not driven
+        through this adapter yet. They operate on the internal 128-bit vector
+        register file and need (a) a second custom opcode + vector decode, and
+        (b) the AXI master for vector load/store and gather/scatter. The compute
+        blocks (steps 2, 4, 5) are verified in isolation and ready to connect.
+      </li>
+      <li>
+        The status register (sticky saturation flag) is exposed per-op as <code>sat</code>
+        signals but not yet aggregated into an architectural CSR readable via
+        rdstat/clrstat.
+      </li>
+      <li>
+        No synthesis has been run here. DSP48/LUT/timing numbers on the 7020 must be
+        checked in Vivado. Q1.15 vcmul is ~16 DSP48s of the 220 available.
+      </li>
+    </ul>
+
+    <h2>Simulator notes</h2>
+    <p>
+      Verified with Icarus Verilog 12.0 (<code>iverilog -g2012</code>). Icarus-specific notes,
+      none of which affect synthesis:
+    </p>
+    <ul>
+      <li><code>sorry: constant selects ...</code> and <code>unique/unique0 ... ignored</code> are benign.</li>
+      <li>Functions may not have output args in Icarus — <code>ext_q15</code> returns a packed value instead.</li>
+      <li>Prefer continuous <code>assign</code> with function calls over <code>always_comb</code> with function calls (an <code>always_comb</code>+automatic-function combination hung Icarus).</li>
+      <li>Vivado (the real synthesis target) accepts all these constructs; consider a Verilator pass for stricter linting.</li>
+    </ul>
+
+    <h2>Build &amp; run (example)</h2>
+    <pre><code>iverilog -g2012 -o s1 q15_alu.sv tb_q15_alu.sv && python3 q15_ref.py > vectors.txt && vvp s1
+iverilog -g2012 -o s6 cvxif_pkg.sv q15_alu.sv dsp_decode.sv dsp_cvxif.sv tb_dsp_cvxif.sv && vvp s6</code></pre>
+
+    <footer class="site-footer">
+      &copy; 2026 Johnny Zhang &nbsp;|&nbsp; Last updated: September 2026
+    </footer>
+
+  </div>
+</body>
+</html>
